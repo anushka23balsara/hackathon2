@@ -20,7 +20,7 @@ function lookup() {
 async function fetchStudent(v) {
   const id = ++reqId;
   try {
-    const res = await fetch("/api/student/" + encodeURIComponent(v));
+    const res = await fetch("/" + encodeURIComponent(v));
     const json = await res.json();
     if (id !== reqId) return;                                   // ignore outdated responses
     if (res.status === 404 && json.partial) { out.innerHTML = ""; return; }   // still typing
