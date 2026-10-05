@@ -7,12 +7,10 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from data_seed import BRANCHES, PERIODS, SUBJECTS, FACULTY, STUDENTS, TIMETABLE
 
 app = Flask(__name__)
-app.secret_key = "gecp-timetable-secret-change-me"  # only used to sign the login cookie
+app.secret_key = "gecp-timetable-secret-change-me"
 
-# FIXED FOR VERCEL: Uses writeable /tmp directory
 DB_PATH = "/tmp/college.db"
 DAY_ORDER = "CASE t.day WHEN 'Mon' THEN 1 WHEN 'Tue' THEN 2 WHEN 'Wed' THEN 3 WHEN 'Thu' THEN 4 WHEN 'Fri' THEN 5 END"
-
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
@@ -20,9 +18,7 @@ def get_conn():
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
-
 def init_db():
-    """Create tables and load the sample data, but only the first time this runs."""
     is_new = not os.path.exists(DB_PATH)
     conn = get_conn()
     cur = conn.cursor()
@@ -99,11 +95,11 @@ def init_db():
             [(code, generate_password_hash(code)) for code, _ in FACULTY],
         )
         conn.commit()
-        print("Created college.db and loaded sample data.")
     conn.close()
 
-# FIXED FOR VERCEL: Triggers DB creation automatically on import
-init_db()
+@app.before_request
+def initialize_on_first_request():
+    init_db()
 
 def require_login():
     code = session.get("faculty_code")
@@ -111,13 +107,9 @@ def require_login():
         return None
     return code
 
-
-# ---------- student pages (existing) ----------
-
 @app.route("/")
 def home():
     return render_template("index.html")
-
 
 @app.route("/api/student/<roll_no>")
 def get_student(roll_no):
@@ -172,7 +164,6 @@ def get_student(roll_no):
     finally:
         conn.close()
 
-
 @app.route("/api/student/<roll_no>/attendance")
 def student_attendance(roll_no):
     roll_no = roll_no.strip().upper()
@@ -223,13 +214,9 @@ def student_attendance(roll_no):
     finally:
         conn.close()
 
-
-# ---------- faculty portal ----------
-
 @app.route("/faculty")
 def faculty_page():
     return render_template("faculty.html")
-
 
 @app.route("/api/faculty/session")
 def faculty_session():
@@ -242,7 +229,6 @@ def faculty_session():
     finally:
         conn.close()
     return jsonify(logged_in=True, code=code, name=row["full_name"] if row else code)
-
 
 @app.route("/api/faculty/login", methods=["POST"])
 def faculty_login():
@@ -259,6 +245,51 @@ def faculty_login():
     session["faculty_code"] = code
     return jsonify(ok=True, code=code)
 
-
 @app.route("/api/faculty/logout", methods=["POST"])
 def faculty_logout():
+    session.pop("faculty_code", None)
+    return jsonify(ok=True)
+
+@app.route("/api/faculty/password", methods=["POST"])
+def faculty_change_password():
+    code = require_login()
+    if not code:
+        return jsonify(error="Please log in again."), 401
+    body = request.get_json(silent=True) or {}
+    current = str(body.get("current", ""))
+    ).fetchall()
+finally:
+conn.close()
+return jsonify(history=[dict(r) for r in rows])
+@app.route("/api/faculty/timetable/int:timetable_id", methods=["PATCH"])
+def edit_timetable(timetable_id):
+code = require_login()
+if not code:
+return jsonify(error="Please log in again."), 401
+body = request.get_json(silent=True) or {}
+conn = get_conn()
+try:
+slot = _own_slot(conn, code, timetable_id)
+if not slot:
+return jsonify(error="That class is not on your timetable."), 404
+day = body.get("day", slot["day"])
+start_period = int(body.get("start_period", slot["start_period"]))
+end_period = int(body.get("end_period", slot["end_period"]))
+room = (body.get("room") or "").strip() or None
+subject_code = body.get("subject_code", slot["subject_code"])
+if day not in ("Mon", "Tue", "Wed", "Thu", "Fri"):
+return jsonify(error="Not a valid day."), 400
+if end_period < start_period:
+return jsonify(error="End period can't be before the start period."), 400
+if not conn.execute("SELECT 1 FROM subjects WHERE code=?", (subject_code,)).fetchone():
+return jsonify(error="Not a valid subject."), 400
+conn.execute(
+"UPDATE timetable SET day=?, start_period=?, end_period=?, room=?, subject_code=? WHERE id=?",
+(day, start_period, end_period, room, subject_code, timetable_id),
+)
+conn.commit()
+finally:
+conn.close()
+return jsonify(ok=True)
+if name == "main":
+app.run(debug=True)
