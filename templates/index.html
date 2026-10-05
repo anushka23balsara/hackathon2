@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GEC Palanpur – Find Your Batch</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<main>
+  <p class="college">Government Engineering College Palanpur</p>
+  <h1>Find your batch</h1>
+  <p class="sub">First semester, 2026. Type your temporary roll number to see your batch and your weekly timetable with faculty, room and time.</p>
+
+  <label for="roll">Temp. roll number</label>
+  <input id="roll" maxlength="6" autocomplete="off" autocapitalize="characters" placeholder="CE01" aria-describedby="hint">
+  <p class="hint" id="hint">Examples: <button data-n="C01">C01</button><button data-n="CE01">CE01</button><button data-n="EE01">EE01</button><button data-n="ME01">ME01</button></p>
+
+  <div id="out" aria-live="polite"></div>
+  <p class="note">Batch list effective 16 September 2026. Timetable of the Humanities and Science Department, effective 1 August 2026 (term 1 July to 11 December 2026). Faculty are shown by their initials as printed on the timetable.</p>
+  <p class="note"><a href="{{ url_for('faculty_page') }}">Faculty login →</a></p>
+</main>
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

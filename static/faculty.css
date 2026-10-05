@@ -1,0 +1,33 @@
+.pill{display:inline-flex;gap:6px;align-items:center;font:600 .82rem Figtree,sans-serif;padding:4px 10px;border-radius:999px;background:var(--bg);border:1px solid var(--line);color:var(--muted)}
+form.stack{display:flex;flex-direction:column;gap:14px;margin-top:18px}
+form.stack input,form.stack select{font:600 1.05rem Figtree,sans-serif;padding:12px 14px;border:2px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);width:100%}
+form.stack input:focus,form.stack select:focus{outline:3px solid var(--accent);outline-offset:1px;border-color:var(--ink)}
+.btn{font:700 1rem Figtree,sans-serif;padding:12px 18px;border-radius:10px;border:0;background:var(--ink);color:var(--bg);cursor:pointer}
+.btn:active{opacity:.85}
+.btn.secondary{background:var(--surface);color:var(--ink);border:2px solid var(--line)}
+.btn.small{padding:8px 12px;font-size:.9rem}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.topbar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:-8px 0 18px}
+.topbar .who{font-weight:600}
+.class-card{background:var(--surface);border:1px solid var(--line);border-left:5px solid var(--accent);border-radius:12px;padding:16px;margin-bottom:12px}
+.class-card h3{margin:0 0 4px;font:700 1.05rem "Bricolage Grotesque",Figtree,sans-serif}
+.class-card .meta{color:var(--muted);font-size:.92rem;margin-bottom:10px}
+.class-card .meta b{color:var(--ink)}
+table.roster{width:100%;border-collapse:collapse;margin-top:10px}
+table.roster th,table.roster td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);font-size:.95rem}
+table.roster th{color:var(--muted);font-weight:600;font-size:.8rem;text-transform:uppercase;letter-spacing:.02em}
+.status-toggle{display:flex;gap:6px}
+.status-toggle button{font:600 .82rem Figtree,sans-serif;padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--muted);cursor:pointer}
+.status-toggle button.present.on{background:#2f8f5b;border-color:#2f8f5b;color:#fff}
+.status-toggle button.absent.on{background:var(--err);border-color:var(--err);color:#fff}
+.summary{display:flex;gap:16px;margin:14px 0;color:var(--muted);font-size:.92rem}
+.summary b{color:var(--ink);font-size:1.1rem}
+.msg{margin-top:12px;padding:10px 14px;border-radius:10px;font-weight:500}
+.msg.ok{background:color-mix(in srgb,#2f8f5b 16%,var(--surface));color:#1d6b41}
+.msg.err{border:1px solid var(--err);color:var(--err)}
+.link{background:none;border:0;color:var(--ink);text-decoration:underline;text-decoration-style:dashed;cursor:pointer;font:inherit;padding:0}
+.history-list{list-style:none;padding:0;margin:10px 0 0}
+.history-list li{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);font-size:.9rem}
+.history-list li span{color:var(--muted)}
+.edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:420px){.edit-grid{grid-template-columns:1fr}}
