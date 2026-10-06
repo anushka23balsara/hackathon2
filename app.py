@@ -7,10 +7,10 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from data_seed import BRANCHES, PERIODS, SUBJECTS, FACULTY, STUDENTS, TIMETABLE
 
 app = Flask(__name__)
-app.secret_key = "gecp-timetable-secret-change-me"
-
-DB_PATH = "/tmp/college.db"
+app.secret_key = "gecp-timetable-secret-change-me"  # only used to sign the login cookie
+DB_PATH = os.path.join(os.path.dirname(__file__), "college.db")
 DAY_ORDER = "CASE t.day WHEN 'Mon' THEN 1 WHEN 'Tue' THEN 2 WHEN 'Wed' THEN 3 WHEN 'Thu' THEN 4 WHEN 'Fri' THEN 5 END"
+
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
@@ -18,7 +18,9 @@ def get_conn():
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
+
 def init_db():
+    """Create tables and load the sample data, but only the first time this runs."""
     is_new = not os.path.exists(DB_PATH)
     conn = get_conn()
     cur = conn.cursor()
@@ -95,11 +97,9 @@ def init_db():
             [(code, generate_password_hash(code)) for code, _ in FACULTY],
         )
         conn.commit()
+        print("Created college.db and loaded sample data.")
     conn.close()
 
-@app.before_request
-def initialize_on_first_request():
-    init_db()
 
 def require_login():
     code = session.get("faculty_code")
@@ -107,9 +107,13 @@ def require_login():
         return None
     return code
 
+
+# ---------- student pages ----------
+
 @app.route("/")
 def home():
     return render_template("index.html")
+
 
 @app.route("/api/student/<roll_no>")
 def get_student(roll_no):
@@ -164,8 +168,10 @@ def get_student(roll_no):
     finally:
         conn.close()
 
+
 @app.route("/api/student/<roll_no>/attendance")
 def student_attendance(roll_no):
+    """Monthly attendance report: for each subject, lectures held this month vs. lectures this student attended."""
     roll_no = roll_no.strip().upper()
     month = request.args.get("month") or datetime.now().strftime("%Y-%m")
     if not re.fullmatch(r"\d{4}-\d{2}", month):
@@ -214,9 +220,13 @@ def student_attendance(roll_no):
     finally:
         conn.close()
 
+
+# ---------- faculty portal ----------
+
 @app.route("/faculty")
 def faculty_page():
     return render_template("faculty.html")
+
 
 @app.route("/api/faculty/session")
 def faculty_session():
@@ -229,6 +239,7 @@ def faculty_session():
     finally:
         conn.close()
     return jsonify(logged_in=True, code=code, name=row["full_name"] if row else code)
+
 
 @app.route("/api/faculty/login", methods=["POST"])
 def faculty_login():
@@ -245,10 +256,12 @@ def faculty_login():
     session["faculty_code"] = code
     return jsonify(ok=True, code=code)
 
+
 @app.route("/api/faculty/logout", methods=["POST"])
 def faculty_logout():
     session.pop("faculty_code", None)
     return jsonify(ok=True)
+
 
 @app.route("/api/faculty/password", methods=["POST"])
 def faculty_change_password():
@@ -257,39 +270,239 @@ def faculty_change_password():
         return jsonify(error="Please log in again."), 401
     body = request.get_json(silent=True) or {}
     current = str(body.get("current", ""))
-    ).fetchall()
-finally:
-conn.close()
-return jsonify(history=[dict(r) for r in rows])
-@app.route("/api/faculty/timetable/int:timetable_id", methods=["PATCH"])
+    new = str(body.get("new", ""))
+    if len(new) < 4:
+        return jsonify(error="New password should be at least 4 characters."), 400
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT password_hash FROM teacher_auth WHERE code=?", (code,)).fetchone()
+        if not row or not check_password_hash(row["password_hash"], current):
+            return jsonify(error="Current password is incorrect."), 401
+        conn.execute("UPDATE teacher_auth SET password_hash=? WHERE code=?", (generate_password_hash(new), code))
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify(ok=True)
+
+
+@app.route("/api/faculty/schedule")
+def faculty_schedule():
+    code = require_login()
+    if not code:
+        return jsonify(error="Please log in again."), 401
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT t.id, t.day, t.start_period, t.end_period, t.batch, t.subject_code AS code, "
+            "  sub.name AS subject, b.name AS branch, b.id AS branch_id, "
+            "  COALESCE(t.room, b.default_room) AS room, p1.start_time AS start, p2.end_time AS end "
+            "FROM timetable t "
+            "JOIN branches b ON b.id = t.branch_id "
+            "JOIN subjects sub ON sub.code = t.subject_code "
+            "JOIN periods p1 ON p1.no = t.start_period "
+            "JOIN periods p2 ON p2.no = t.end_period "
+            "WHERE t.faculty_code = ? "
+            f"ORDER BY {DAY_ORDER}, t.start_period",
+            (code,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return jsonify(schedule=[dict(r) for r in rows])
+
+
+@app.route("/api/faculty/options")
+def faculty_options():
+    """Dropdown data for the timetable-edit form."""
+    conn = get_conn()
+    try:
+        subjects = [dict(r) for r in conn.execute("SELECT code, name FROM subjects ORDER BY name")]
+        periods = [dict(r) for r in conn.execute("SELECT no, start_time, end_time FROM periods ORDER BY no")]
+    finally:
+        conn.close()
+    return jsonify(subjects=subjects, periods=periods, days=["Mon", "Tue", "Wed", "Thu", "Fri"])
+
+
+def _own_slot(conn, code, timetable_id):
+    return conn.execute(
+        "SELECT * FROM timetable WHERE id=? AND faculty_code=?", (timetable_id, code)
+    ).fetchone()
+
+
+@app.route("/api/faculty/class/<int:timetable_id>")
+def faculty_class(timetable_id):
+    code = require_login()
+    if not code:
+        return jsonify(error="Please log in again."), 401
+    date = request.args.get("date") or datetime.now().strftime("%Y-%m-%d")
+    conn = get_conn()
+    try:
+        slot = _own_slot(conn, code, timetable_id)
+        if not slot:
+            return jsonify(error="That class is not on your timetable."), 404
+
+        students = conn.execute(
+            "SELECT roll_no, name, sr_no FROM students WHERE branch_id=? AND (? IS NULL OR batch=?) ORDER BY sr_no",
+            (slot["branch_id"], slot["batch"], slot["batch"]),
+        ).fetchall()
+        marked = {r["roll_no"]: r["status"] for r in conn.execute(
+            "SELECT roll_no, status FROM attendance WHERE timetable_id=? AND date=?", (timetable_id, date)
+        )}
+    finally:
+        conn.close()
+    roster = [{"roll_no": s["roll_no"], "name": s["name"], "sr_no": s["sr_no"],
+               "status": marked.get(s["roll_no"], "Present")} for s in students]
+    return jsonify(date=date, batch=slot["batch"], roster=roster, already_marked=bool(marked))
+
+
+@app.route("/api/faculty/attendance", methods=["POST"])
+def save_attendance():
+    code = require_login()
+    if not code:
+        return jsonify(error="Please log in again."), 401
+    body = request.get_json(silent=True) or {}
+    timetable_id = body.get("timetable_id")
+    date = body.get("date") or datetime.now().strftime("%Y-%m-%d")
+    records = body.get("records") or []
+
+    conn = get_conn()
+    try:
+        slot = _own_slot(conn, code, timetable_id)
+        if not slot:
+            return jsonify(error="That class is not on your timetable."), 404
+
+        valid_rolls = {r["roll_no"] for r in conn.execute(
+            "SELECT roll_no FROM students WHERE branch_id=? AND (? IS NULL OR batch=?)",
+            (slot["branch_id"], slot["batch"], slot["batch"]),
+        )}
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        present = 0
+        saved = 0
+        for rec in records:
+            roll_no = rec.get("roll_no")
+            status = rec.get("status")
+            if roll_no not in valid_rolls or status not in ("Present", "Absent"):
+                continue
+            conn.execute(
+                "INSERT INTO attendance (timetable_id, date, roll_no, status, marked_by, marked_at) VALUES (?,?,?,?,?,?) "
+                "ON CONFLICT(timetable_id, date, roll_no) DO UPDATE SET status=excluded.status, marked_by=excluded.marked_by, marked_at=excluded.marked_at",
+                (timetable_id, date, roll_no, status, code, now),
+            )
+            saved += 1
+            if status == "Present":
+                present += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify(ok=True, saved_at=now, total=saved, present=present)
+
+
+@app.route("/api/faculty/class/<int:timetable_id>/monthly")
+def faculty_monthly_report(timetable_id):
+    code = require_login()
+    if not code:
+        return jsonify(error="Please log in again."), 401
+    month = request.args.get("month") or datetime.now().strftime("%Y-%m")
+    if not re.fullmatch(r"\d{4}-\d{2}", month):
+        return jsonify(error="Month should look like 2026-09."), 400
+    like = month + "-%"
+
+    conn = get_conn()
+    try:
+        slot = _own_slot(conn, code, timetable_id)
+        if not slot:
+            return jsonify(error="That class is not on your timetable."), 404
+
+        sibling_ids = [r["id"] for r in conn.execute(
+            "SELECT id FROM timetable WHERE branch_id=? AND (batch IS ? OR batch=?) AND subject_code=?",
+            (slot["branch_id"], slot["batch"], slot["batch"], slot["subject_code"]),
+        )]
+        placeholders = ",".join("?" for _ in sibling_ids)
+
+        held = conn.execute(
+            f"SELECT COUNT(DISTINCT date) AS n FROM attendance WHERE timetable_id IN ({placeholders}) AND date LIKE ?",
+            (*sibling_ids, like),
+        ).fetchone()["n"]
+
+        students = conn.execute(
+            "SELECT roll_no, name, sr_no FROM students WHERE branch_id=? AND (? IS NULL OR batch=?) ORDER BY sr_no",
+            (slot["branch_id"], slot["batch"], slot["batch"]),
+        ).fetchall()
+        attended_rows = conn.execute(
+            f"SELECT roll_no, COUNT(*) AS n FROM attendance "
+            f"WHERE timetable_id IN ({placeholders}) AND date LIKE ? AND status='Present' GROUP BY roll_no",
+            (*sibling_ids, like),
+        ).fetchall()
+        attended = {r["roll_no"]: r["n"] for r in attended_rows}
+
+        subject_name = conn.execute("SELECT name FROM subjects WHERE code=?", (slot["subject_code"],)).fetchone()["name"]
+    finally:
+        conn.close()
+
+    roster = [{
+        "roll_no": s["roll_no"], "name": s["name"], "sr_no": s["sr_no"],
+        "attended": attended.get(s["roll_no"], 0),
+        "percent": round(attended.get(s["roll_no"], 0) * 100 / held, 1) if held else None,
+    } for s in students]
+
+    return jsonify(month=month, subject=subject_name, held=held, roster=roster)
+
+
+@app.route("/api/faculty/attendance/history/<int:timetable_id>")
+def attendance_history(timetable_id):
+    code = require_login()
+    if not code:
+        return jsonify(error="Please log in again."), 401
+    conn = get_conn()
+    try:
+        if not _own_slot(conn, code, timetable_id):
+            return jsonify(error="That class is not on your timetable."), 404
+        rows = conn.execute(
+            "SELECT date, COUNT(*) AS total, SUM(CASE WHEN status='Present' THEN 1 ELSE 0 END) AS present, "
+            "MAX(marked_at) AS marked_at "
+            "FROM attendance WHERE timetable_id=? GROUP BY date ORDER BY date DESC",
+            (timetable_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return jsonify(history=[dict(r) for r in rows])
+
+
+@app.route("/api/faculty/timetable/<int:timetable_id>", methods=["PATCH"])
 def edit_timetable(timetable_id):
-code = require_login()
-if not code:
-return jsonify(error="Please log in again."), 401
-body = request.get_json(silent=True) or {}
-conn = get_conn()
-try:
-slot = _own_slot(conn, code, timetable_id)
-if not slot:
-return jsonify(error="That class is not on your timetable."), 404
-day = body.get("day", slot["day"])
-start_period = int(body.get("start_period", slot["start_period"]))
-end_period = int(body.get("end_period", slot["end_period"]))
-room = (body.get("room") or "").strip() or None
-subject_code = body.get("subject_code", slot["subject_code"])
-if day not in ("Mon", "Tue", "Wed", "Thu", "Fri"):
-return jsonify(error="Not a valid day."), 400
-if end_period < start_period:
-return jsonify(error="End period can't be before the start period."), 400
-if not conn.execute("SELECT 1 FROM subjects WHERE code=?", (subject_code,)).fetchone():
-return jsonify(error="Not a valid subject."), 400
-conn.execute(
-"UPDATE timetable SET day=?, start_period=?, end_period=?, room=?, subject_code=? WHERE id=?",
-(day, start_period, end_period, room, subject_code, timetable_id),
-)
-conn.commit()
-finally:
-conn.close()
-return jsonify(ok=True)
-if name == "main":
-app.run(debug=True)
+    code = require_login()
+    if not code:
+        return jsonify(error="Please log in again."), 401
+    body = request.get_json(silent=True) or {}
+    conn = get_conn()
+    try:
+        slot = _own_slot(conn, code, timetable_id)
+        if not slot:
+            return jsonify(error="That class is not on your timetable."), 404
+
+        day = body.get("day", slot["day"])
+        start_period = int(body.get("start_period", slot["start_period"]))
+        end_period = int(body.get("end_period", slot["end_period"]))
+        room = (body.get("room") or "").strip() or None
+        subject_code = body.get("subject_code", slot["subject_code"])
+
+        if day not in ("Mon", "Tue", "Wed", "Thu", "Fri"):
+            return jsonify(error="Not a valid day."), 400
+        if end_period < start_period:
+            return jsonify(error="End period can't be before the start period."), 400
+        if not conn.execute("SELECT 1 FROM subjects WHERE code=?", (subject_code,)).fetchone():
+            return jsonify(error="Not a valid subject."), 400
+
+        conn.execute(
+            "UPDATE timetable SET day=?, start_period=?, end_period=?, room=?, subject_code=? WHERE id=?",
+            (day, start_period, end_period, room, subject_code, timetable_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify(ok=True)
+
+
+init_db()
+
+if __name__ == "__main__":
+    app.run(debug=True)
